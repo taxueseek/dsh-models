@@ -1,6 +1,6 @@
 {
   "name": "dsh-models",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Model menu for the dsh web GUI: search-first model picker + reasoning-effort selector, per-session subagent model routing, dim-powered price badges and new-model discovery, and a settings-page management card",
   "type": "module",
   "main": "lib/host.js",
@@ -51,9 +51,10 @@
       "platform": "web"
     },
     "compatibility": {
-      "dsh": "^0.2.0-rc.1 || ^0.2.0-rc.2",
+      "dsh": "^0.2.0-rc.1 || ^0.2.0-rc.2 || ^0.2.1-alpha.3",
       "dshReleases": {
-        "0.2.0-rc.2": "compatible"
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-alpha.3": "compatible"
       },
       "dshOperations": {
         "0.2.0-rc.2": {

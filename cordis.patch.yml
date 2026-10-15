@@ -1,0 +1,14 @@
+# dsh-models bundle patch: mounts the model menu over the composer's
+# model seat in the dsh web GUI.
+#
+# `id` is the bundle identity (host-side patch toggles match on it,
+# independent of the package name); `name` must match the node half's
+# exported cordis `name`.
+#
+# Coexistence: dsh-models serves /api/model-picker/models, the same route
+# as upstream dsh-model-picker and dsh-model-picker-enhanced. Install only
+# ONE of the three per profile; uninstall the others first.
+
+- insert:
+    - id: dsh-models
+      name: 'dsh-models'

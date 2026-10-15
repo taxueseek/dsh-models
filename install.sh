@@ -9,11 +9,6 @@
 # unrelated placeholder package (0.0.1, "name reserved"), so installs
 # MUST go through git+https — the npm channel would silently install the
 # wrong package.
-#
-# Coexistence: dsh-models serves /api/model-picker/models, the same route
-# as upstream dsh-model-picker and dsh-model-picker-enhanced. Remove those
-# first — only one of the three may be mounted per profile:
-#   dsh plugin --profile web remove dsh-model-picker dsh-model-picker-enhanced
 set -eu
 
 PROFILE="web"

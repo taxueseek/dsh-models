@@ -45,8 +45,6 @@ curl -fsSL https://raw.githubusercontent.com/taxueseek/dsh-models/main/install.s
 等价手工操作：
 
 ```sh
-# 先卸掉同类——一个 profile 只挂一个模型菜单（共用路由）
-dsh plugin --profile web remove dsh-model-picker dsh-model-picker-enhanced
 dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 # 重启 dsh web
 ```
@@ -86,6 +84,3 @@ dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 
 ## 共存
 
-`dsh-models`、`dsh-model-picker`、`dsh-model-picker-enhanced` 三者都占用
-`/api/model-picker/models`。一个 profile 只挂其中一个；安装脚本不会替你
-卸载另外两个（见上面的手工命令）。

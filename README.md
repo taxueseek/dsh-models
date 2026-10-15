@@ -52,8 +52,6 @@ curl -fsSL https://raw.githubusercontent.com/taxueseek/dsh-models/main/install.s
 Manual equivalent:
 
 ```sh
-# remove the siblings first — only ONE model menu per profile (shared route)
-dsh plugin --profile web remove dsh-model-picker dsh-model-picker-enhanced
 dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 # restart dsh web
 ```
@@ -94,9 +92,3 @@ merges its catalog into the model facts: price badges, `maxOut`/`released`
 facts, and discovery rows for models `dim` knows that the dsh directory does
 not (capped at 30 per provider, newest first). Without `dim` the picker works
 exactly like upstream — the bridge degrades to directory-only facts.
-
-## Coexistence
-
-`dsh-models`, `dsh-model-picker`, and `dsh-model-picker-enhanced` all serve
-`/api/model-picker/models`. Mount only one per profile; the installer does not
-remove the others for you (see manual equivalent above).

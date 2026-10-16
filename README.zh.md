@@ -6,6 +6,10 @@
 
 # dsh-models
 
+<div align="center">
+  <img src="intro.png" alt="dsh-models 总览：三分区触发——推理层级、子代理路由、主模型选择" width="720" />
+</div>
+
 ## 一句话
 
 dsh 网页端的模型菜单——模型、思考强度、子代理用什么模型，都在输入框的模型座上点一下搞定。
@@ -35,7 +39,7 @@ dsh 网页端的模型菜单——模型、思考强度、子代理用什么模�
 
 ## 安装
 
-需要 harness ≥ 0.2.0-rc.1（在 0.2.0-rc.2 上实测）。
+需要 harness ≥ 0.2.0-rc.1（在 0.2.0-rc.2 上实测，0.2.1-alpha.3 在跑）。
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/taxueseek/dsh-models/main/install.sh | sh
@@ -56,7 +60,8 @@ dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 
 | dsh-models | Harness | 说明 |
 | --- | --- | --- |
-| 0.1.0 | **0.2.0-rc.2（当前，实测）** | 与线上在跑的增强构建代码一致；客户端按官方版本座位表解析。 |
+| 0.1.2 | **0.2.1-alpha.3（当前，在跑）** | 新增测试与冷启动改造；座位与路由面不变。 |
+| 0.1.0 | 0.2.0-rc.2（实测） | 与线上在跑的增强构建代码一致；客户端按官方版本座位表解析。 |
 
 需要 Node.js ≥ 22.19。
 
@@ -82,5 +87,16 @@ dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 有的新模型发现行（每家最多 30 个，按最新排序）。没有 `dim` 时选择器与上游
 行为一致——桥接自动降级为纯目录事实。
 
-## 共存
+## 测试与性能
+
+- **`npm test`** — 两套纯 Node 测试：`scripts/host-route.mjs` 驱动真实路由
+  处理器（事实缓存、子代理路由、错误守卫），`scripts/interaction.mjs` 在
+  jsdom 里渲染选择器并驱动打开/搜索/收藏/强度，共 44 项断言。宿主 peer
+  依赖缺失时自动 SKIP，任何机器上都是绿的。
+- **冷启动不阻塞** — `/api/model-picker/models` 冷缓存时先回快 503，目录
+  重建放后台跑（实测：首次响应 ~3ms，~3 秒内暖到 200）；客户端对 503 退避
+  重试，事实一落地价格徽章就出现。暖缓存走 stale-while-revalidate。
+- **渲染路径优化** — 稳定回调 + 派生列表 memo 化：方向键一次从重渲全部
+  ~306 行降到 2 行；按键过滤列表从 ~1124 行降到 ~258 行。细节见
+  [CHANGELOG](CHANGELOG.md)。
 

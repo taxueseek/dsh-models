@@ -6,6 +6,10 @@
 
 # dsh-models
 
+<div align="center">
+  <img src="intro.png" alt="dsh-models overview: three-zone trigger — reasoning effort, subagent routing, main model picker" width="720" />
+</div>
+
 ## In one line
 
 The model menu for the dsh web GUI — pick the model, its effort, and your
@@ -42,7 +46,8 @@ upstream names so existing preferences migrate seamlessly.
 
 ## Install
 
-Requires harness ≥ 0.2.0-rc.1 (verified on 0.2.0-rc.2).
+Requires harness ≥ 0.2.0-rc.1 (verified on 0.2.0-rc.2; also running on
+0.2.1-alpha.3).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/taxueseek/dsh-models/main/install.sh | sh
@@ -63,7 +68,8 @@ dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 
 | dsh-models | Harness | Notes |
 | --- | --- | --- |
-| 0.1.0 | **0.2.0-rc.2 (current, measured)** | Code-identical to the enhanced build running in production; client resolves against the official 0.2.0 slot roster. |
+| 0.1.2 | **0.2.1-alpha.3 (current, running)** | Adds the test suites and non-blocking cold start; seat and route surfaces unchanged. |
+| 0.1.0 | 0.2.0-rc.2 (measured) | Code-identical to the enhanced build running in production; client resolves against the official 0.2.0 slot roster. |
 
 Requires Node.js ≥ 22.19 (the floor the picker is developed and tested on).
 
@@ -92,3 +98,20 @@ merges its catalog into the model facts: price badges, `maxOut`/`released`
 facts, and discovery rows for models `dim` knows that the dsh directory does
 not (capped at 30 per provider, newest first). Without `dim` the picker works
 exactly like upstream — the bridge degrades to directory-only facts.
+
+## Tests & performance
+
+- **`npm test`** — two pure-Node suites: `scripts/host-route.mjs` drives the
+  real route handlers (facts cache, subagent route, error guards),
+  `scripts/interaction.mjs` renders the picker in jsdom and drives
+  open/search/favorite/effort — 44 checks total. They SKIP cleanly when the
+  harness peer deps are absent, so the suite stays green on any machine.
+- **Non-blocking cold start** — a cold `/api/model-picker/models` cache answers
+  a fast 503 while the catalog refresh runs in the background (measured: first
+  response ~3 ms, warm 200 within ~3 s); the client retries that 503 with
+  backoff, so price badges appear as soon as the facts land. Warm caches are
+  served stale-while-revalidate.
+- **Render-path pass** — stable callbacks + memoized derived lists: an
+  arrow-key press re-renders 2 rows instead of all ~306; a keystroke-filtered
+  list ~258 instead of ~1124. Full details in the
+  [CHANGELOG](CHANGELOG.md).

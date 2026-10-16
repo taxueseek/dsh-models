@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.2 — 2026-10-16
+
+Tests + non-blocking cold start (the two things worth absorbing from the
+upstream project's engineering practice; upstream has no superior render or
+collect technique to copy — this fork's memo path and 60s TTL already match or
+beat it):
+
+- **Test: `scripts/host-route.mjs`** — pure-Node suite that drives the real
+  route handlers with stub `llm`/`webServer`/`sessions`/`dispatch`. Covers the
+  facts cache (cold 503 → warm 200, stale-while-revalidate, failure backoff),
+  the `sendJson` double-response guard, the subagent route (GET/POST/DELETE +
+  validation + 405), the `agent/request` override, and `session/disposed`
+  cleanup. `npm test` runs it.
+- **Test: `scripts/interaction.mjs`** — renders the registered `ModelPicker`
+  into jsdom with a matched react-dom 18 pair and drives open/search/favorite/
+  arrow/scroll/effort. Guards the `onListScroll` `event.currentTarget`-in-rAF
+  regression (scroll must not throw) and asserts, as a source invariant, that
+  `chooseSubagent` calls the module `saveSubagentRoute` (not the `useState`
+  setter that used to shadow it). SKIPs cleanly when the harness deps are
+  absent, so `npm test` stays green on machines without them.
+- **Perf: non-blocking cold start (host)** — `/api/model-picker/models` no
+  longer awaits the full catalog build on a cold cache (the old path blocked the
+  first request after a restart for up to `COLLECT_TIMEOUT_MS`, 30s). A warm
+  cache is served immediately (stale-while-revalidate); a cold cache answers a
+  fast 503 while the refresh runs in the background. Measured: cold first
+  response 3ms (was ~2–3s+), warms to 200 within ~3s.
+- **Fix: client `loadFacts` retries the cold-start 503** — the picker backs off
+  and retries the facts fetch a few times on the host's cold-start 503 so badges
+  appear as soon as the refresh lands, instead of waiting for a remount; any
+  other status (route genuinely absent) still gives up at once.
+
 ## 0.1.1 — 2026-10-15
 
 Performance and reliability pass (Plan A):

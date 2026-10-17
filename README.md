@@ -12,8 +12,22 @@
 
 ## 实际效果 / Actual UI
 
+**推理层级 / Reasoning Effort**
+
 <div align="center">
-  <img src="screenshot.png" alt="dsh-models actual UI: model picker with search, provider column, price badges" width="720" />
+  <img src="zone-effort.png" alt="Reasoning effort selector: Off / Low / High / Max" width="720" />
+</div>
+
+**子代理路由 / Subagent Routing**
+
+<div align="center">
+  <img src="zone-subagent.png" alt="Subagent model picker: per-session model override" width="720" />
+</div>
+
+**主模型选择 / Main Model Picker**
+
+<div align="center">
+  <img src="zone-picker.png" alt="Main model picker: search, provider column, price badges" width="720" />
 </div>
 
 ## In one line

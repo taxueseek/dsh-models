@@ -12,8 +12,22 @@
 
 ## 实际效果 / Actual UI
 
+**推理层级 / Reasoning Effort**
+
 <div align="center">
-  <img src="screenshot.png" alt="dsh-models 实际界面：模型选择器，含搜索、供应商列、价格徽章" width="720" />
+  <img src="zone-effort.png" alt="推理层级选择器：Off / Low / High / Max" width="720" />
+</div>
+
+**子代理路由 / Subagent Routing**
+
+<div align="center">
+  <img src="zone-subagent.png" alt="子代理模型选择器：按会话覆盖子代理模型" width="720" />
+</div>
+
+**主模型选择 / Main Model Picker**
+
+<div align="center">
+  <img src="zone-picker.png" alt="主模型选择器：搜索、供应商列、价格徽章" width="720" />
 </div>
 
 ## 一句话

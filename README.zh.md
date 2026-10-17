@@ -60,7 +60,7 @@ dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 
 | dsh-models | Harness | 说明 |
 | --- | --- | --- |
-| 0.1.2 | **0.2.1-alpha.3（当前，在跑）** | 新增测试与冷启动改造；座位与路由面不变。 |
+| 0.1.4 | **0.2.1-alpha.3（当前，在跑）** | 列表虚拟化 + dim 刷新节流；座位与路由面不变。 |
 | 0.1.0 | 0.2.0-rc.2（实测） | 与线上在跑的增强构建代码一致；客户端按官方版本座位表解析。 |
 
 需要 Node.js ≥ 22.19。
@@ -91,12 +91,15 @@ dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 
 - **`npm test`** — 两套纯 Node 测试：`scripts/host-route.mjs` 驱动真实路由
   处理器（事实缓存、子代理路由、错误守卫），`scripts/interaction.mjs` 在
-  jsdom 里渲染选择器并驱动打开/搜索/收藏/强度，共 44 项断言。宿主 peer
-  依赖缺失时自动 SKIP，任何机器上都是绿的。
+  jsdom 里渲染选择器并驱动打开/搜索/收藏/强度/虚拟列表窗口，共 92 项断言。
+  宿主 peer 依赖缺失时自动 SKIP，任何机器上都是绿的。
 - **冷启动不阻塞** — `/api/model-picker/models` 冷缓存时先回快 503，目录
   重建放后台跑（实测：首次响应 ~3ms，~3 秒内暖到 200）；客户端对 503 退避
   重试，事实一落地价格徽章就出现。暖缓存走 stale-while-revalidate。
-- **渲染路径优化** — 稳定回调 + 派生列表 memo 化：方向键一次从重渲全部
-  ~306 行降到 2 行；按键过滤列表从 ~1124 行降到 ~258 行。细节见
-  [CHANGELOG](CHANGELOG.md)。
+- **列表虚拟化** — 弹窗只挂载视口附近的行（线上 310 行里 ~13 行），撑开
+  两个占位 div 保持总高与滚动条不变；组头滚出窗口时由同式样的合成头钉在
+  顶部。线上实测：开门 58.7 → 23.5ms（中位），DOM 节点 5506 → 1170；真实
+  浏览器 bench：整轮交互累计渲染 243 → 65ms。行高由「有无描述行」确定
+  （38/50px），不测 DOM，滚动数学零重排。dim 目录 60s → 10min 刷新，
+  宿主每分钟省 ~1.5s CPU。细节见 [CHANGELOG](CHANGELOG.md)。
 

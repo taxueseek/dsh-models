@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>IME probe</title></head>
+<body><div id="app"></div><pre id="out"></pre>
+<script src="./react.js"></script><script src="./react-dom.js"></script>
+<script>
+// Real-browser check of the IME guard: compose a Chinese word and confirm the
+// list does NOT filter mid-composition, then does after compositionend.
+(async () => {
+  const out = []
+  const say = (s) => { out.push(s); document.getElementById('out').textContent = out.join('\n') }
+  localStorage.clear()
+  const NAMES = ['a','b','c','d','e','f']
+  const COUNTS = [70,34,31,24,18,14]
+  const GROUPS = NAMES.map((id,pi)=>({id,name:'P'+id,models:Array.from({length:COUNTS[pi]},(_,mi)=>({id:id+'-'+mi,name:'M '+id+mi,description:'desc '+mi}))}))
+  const rows = []
+  const snapshot = { current:{provider:'a',model:'a-3'}, routable:null, groups:GROUPS, failures:[], status:'ready', error:null }
+  const store = { subscribe(){ return ()=>{} }, getSnapshot:()=>snapshot }
+  const origFetch = window.fetch
+  window.fetch = async (u) => String(u).includes('/subagent')
+    ? new Response(JSON.stringify({ok:true,route:null}),{status:200})
+    : new Response(JSON.stringify({ok:true,rows,discovered:[]}),{status:200})
+  const React = window.React, { createRoot } = window.ReactDOM, h = React.createElement
+  let plugin=null
+  window.__ModuleLoader__={ load({factory}){ plugin=factory(n=>{ if(n==='react') return React; throw new Error(n) }) } }
+  ;(0,eval)(await (await origFetch('./client.js')).text())
+  const cap={}
+  const slots={ inject(s,fn){return fn()}, register(spec,C){ cap[spec.name]={spec,C}; return ()=>{} } }
+  plugin.apply({ inject(n,cb){ return cb({ locale:{getSnapshot:()=>({active:'zh'}),subscribe:()=>()=>{}}, slots,
+    modelDirectories:{ directoryFor:()=>({store, load:async()=>{}, select:async()=>{}}) },
+    sessions:{subagentAddress:()=>undefined}, remote:{}, 'remote.session':{} }) },
+    slots, effect(fn){ const d=fn(); return typeof d==='function'?d:undefined } })
+  const seat=cap["conversation.input.model"]; seat.C=seat.C||seat.Component
+  const root=createRoot(document.getElementById('app'))
+  const wait=ms=>new Promise(r=>setTimeout(r,ms))
+  root.render(h(seat.C,{...seat.spec.inject('ime'),locked:false}))
+  await wait(120)
+  document.querySelector('.dsh-mp2-triggerLeft').click()
+  await wait(120)
+  const list=document.querySelector('.dsh-mp2-list')
+  const box=document.querySelector('.dsh-mp2-search')
+  const n=()=>list.querySelectorAll('.dsh-mp2-option').length
+  const set=(v)=>{ const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set; s.call(box,v); box.dispatchEvent(new Event('input',{bubbles:true})) }
+  const before=n()
+  say('rows with empty query: '+before)
+  // compositionstart, then type pinyin letters that match nothing
+  box.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}))
+  set('z'); await wait(150); const a=n()
+  set('zz'); await wait(150); const b=n()
+  say('mid-composition "z"  -> rows '+a+'  (must equal '+before+')')
+  say('mid-composition "zz" -> rows '+b+'  (must equal '+before+')')
+  say('input shows: "'+box.value+'"  (must be the in-progress text)')
+  say(a===before && b===before ? 'PASS mid-composition filtering is blocked' : 'FAIL list filtered mid-composition')
+  // commit
+  box.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}))
+  await wait(150); const c=n()
+  say('after compositionend   -> rows '+c+'  (must differ: nothing matches "zz")')
+  say(c!==before ? 'PASS filtering resumed after commit' : 'FAIL filtering did not resume')
+  window.__IME__={before,a,b,after:c,value:box.value}
+})().catch(e=>{document.getElementById('out').textContent='ERROR: '+(e&&e.stack||e)})
+</script></body></html>

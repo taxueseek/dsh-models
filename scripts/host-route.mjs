@@ -32,7 +32,7 @@ let unresolved = null
 process.on('unhandledRejection', (e) => { unresolved = e })
 
 function makeLlm(overrides = {}) {
-  const calls = { listProviders: 0, listModels: 0, resolveModel: 0 }
+  const calls = { listProviders: 0, listModels: 0, resolveModel: 0, resolveModelInfo: 0 }
   const llm = {
     listProviders() { calls.listProviders++; if (overrides.providersThrows) throw new Error('no providers'); return overrides.providers ?? [
       { id: 'deepseek', name: 'DeepSeek' },
@@ -42,7 +42,19 @@ function makeLlm(overrides = {}) {
       { id: 'deepseek-v4-flash', name: 'Flash', inputModalities: ['text'] },
       { id: 'ghost', name: 'Ghost' },
     ] },
-    async resolveModel(provider, model) { calls.resolveModel++; if (model === 'ghost') throw new Error('unknown model'); return { context: { contextWindow: 128000 }, inputModalities: ['text', 'image'] } },
+    // `resolver` picks which spelling the service exposes, mirroring the two
+    // shapes this code has to live with: the real Host LlmRuntime
+    // (resolveModelInfo only) and older/stand-in services (resolveModel).
+    ...(overrides.resolver === 'none'
+      ? {}
+      : overrides.resolver === 'both'
+        ? {
+          async resolveModel(provider, model) { calls.resolveModel++; return { context: { contextWindow: 32000 }, inputModalities: ['text'] } },
+          async resolveModelInfo(provider, model) { calls.resolveModelInfo++; if (model === 'ghost') throw new Error('unknown model'); return { provider, id: model, name: model, context: { contextWindow: 128000 }, inputModalities: ['text', 'image'] } },
+        }
+        : overrides.resolver === 'infoOnly'
+          ? { async resolveModelInfo(provider, model) { calls.resolveModelInfo++; if (model === 'ghost') throw new Error('unknown model'); return { provider, id: model, name: model, context: { contextWindow: 128000 }, inputModalities: ['text', 'image'] } } }
+          : { async resolveModel(provider, model) { calls.resolveModel++; if (model === 'ghost') throw new Error('unknown model'); return { context: { contextWindow: 128000 }, inputModalities: ['text', 'image'] } } }),
   }
   return { llm, calls }
 }
@@ -229,6 +241,77 @@ console.log('dim installed:', existsSync(homedir() + '/.local/bin/dim'))
   ok('routes registered', h.routes.has('/api/model-picker/models') && h.routes.has('/api/model-picker/subagent'))
   h.disposers.forEach((d) => d())
   ok('after unload, routes removed (no zombie)', !h.routes.has('/api/model-picker/models') && !h.routes.has('/api/model-picker/subagent'))
+}
+
+// ── Group 7: model-info resolution across service shapes ──
+// The Host LlmRuntime exposes resolveModelInfo and NOT resolveModel (that
+// method lives on adapters). The old code called resolveModel unconditionally,
+// every call threw, the per-model catch swallowed it, and rows came back with
+// no contextWindow at all — the badge was dead and nothing failed loudly. These
+// cover the shapes this has to survive.
+const ROWS = '/api/model-picker/models'
+const ctxRows = (r) => (r.json?.rows ?? []).filter((row) => row.contextWindow !== undefined).length
+const totalRows = (r) => (r.json?.rows ?? []).length
+
+{
+  // The real Host shape: resolveModelInfo only.
+  const h = await freshHost({ resolver: 'infoOnly' })
+  const warm = await waitWarm(h.routes, ROWS)
+  ok('infoOnly: warms to 200', !!warm)
+  ok('infoOnly: resolveModelInfo is used', h.calls.resolveModelInfo > 0, `resolveModelInfo=${h.calls.resolveModelInfo}`)
+  eq('infoOnly: resolveModel never called', h.calls.resolveModel, 0)
+  ok('infoOnly: rows carry contextWindow', ctxRows(warm) > 0, `${ctxRows(warm)} / ${totalRows(warm)}`)
+  eq('infoOnly: every resolvable row has contextWindow', ctxRows(warm), totalRows(warm))
+}
+
+{
+  // An older service that only knows resolveModel still works.
+  const h = await freshHost({ resolver: 'modelOnly' })
+  const warm = await waitWarm(h.routes, ROWS)
+  ok('modelOnly: warms to 200', !!warm)
+  ok('modelOnly: resolveModel is used', h.calls.resolveModel > 0, `resolveModel=${h.calls.resolveModel}`)
+  eq('modelOnly: resolveModelInfo never called', h.calls.resolveModelInfo, 0)
+  ok('modelOnly: rows carry contextWindow', ctxRows(warm) > 0, `${ctxRows(warm)} / ${totalRows(warm)}`)
+}
+
+{
+  // A service exposing both must be read through resolveModelInfo — the same
+  // window the Host publishes, not the adapter's narrower one.
+  const h = await freshHost({ resolver: 'both' })
+  const warm = await waitWarm(h.routes, ROWS)
+  ok('both: warms to 200', !!warm)
+  ok('both: resolveModelInfo preferred', h.calls.resolveModelInfo > 0 && h.calls.resolveModel === 0,
+    `info=${h.calls.resolveModelInfo} model=${h.calls.resolveModel}`)
+  const flash = (warm?.json?.rows ?? []).find((row) => row.id === 'deepseek-v4-flash')
+  eq('both: the wider contextWindow wins', flash?.contextWindow, 128000)
+}
+
+{
+  // Neither method present: no throw, rows still built from listModels, and the
+  // dim de-dup set stays populated (it feeds discovery, so it must not go empty
+  // just because metadata resolution is unavailable).
+  const h = await freshHost({ resolver: 'none' })
+  const warm = await waitWarm(h.routes, ROWS)
+  ok('neither: still warms to 200 (no throw)', !!warm)
+  eq('neither: resolveModel not called', h.calls.resolveModel, 0)
+  eq('neither: resolveModelInfo not called', h.calls.resolveModelInfo, 0)
+  ok('neither: rows still built from listModels', totalRows(warm) > 0, `rows=${totalRows(warm)}`)
+  ok('neither: provider mappings still produced', (warm?.json?.providers ?? []).length > 0)
+}
+
+// ── Group 8: no temp files left behind by the dim bridge ──
+// The old path mkdtemp'd a directory and redirected the child's stdout into it,
+// which stranded a ~10MB copy (apiKey previews included) whenever the host was
+// killed before the callback ran its finally. The pipe path must not create
+// anything under tmpdir() at all.
+{
+  const { readdirSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const before = readdirSync(tmpdir()).filter((n) => n.startsWith('dsh-models-dim-')).length
+  const h = await freshHost()
+  await waitWarm(h.routes, ROWS)
+  const after = readdirSync(tmpdir()).filter((n) => n.startsWith('dsh-models-dim-')).length
+  eq('collect leaves no dsh-models-dim-* directory in tmpdir', after, before)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

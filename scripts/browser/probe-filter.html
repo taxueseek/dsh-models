@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body><div id="app"></div><pre id="out"></pre>
+<script src="./react.js"></script><script src="./react-dom.js"></script>
+<script>
+// 直接量化：276 行下，过滤计算本身要多久？防抖 300ms 买到了什么？
+(async () => {
+  const out=[]; const say=s=>{out.push(s);document.getElementById('out').textContent=out.join('\n')}
+  const NAMES=['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s']
+  const COUNTS=[70,34,31,24,18,14,13,12,10,9,9,8,6,5,4,3,3,2,1]
+  const GROUPS=NAMES.map((id,pi)=>({id,name:'P'+id,models:Array.from({length:COUNTS[pi]},(_,mi)=>({id:id+'-'+mi,name:'M '+id+mi,description:'desc '+mi}))}))
+  const allRows=GROUPS.flatMap(g=>g.models.map(m=>({group:g,model:m})))
+  const q='m 1'
+  // 复刻 matches 的过滤逻辑
+  const filter=(q)=>GROUPS.flatMap(g=>g.models.filter(m=>m.name.toLowerCase().includes(q)||m.description.toLowerCase().includes(q)).map(m=>({group:g,model:m})))
+  const t=[];
+  for(let i=0;i<200;i++){const t0=performance.now();filter(q);t.push(performance.now()-t0)}
+  t.sort((a,b)=>a-b)
+  say(`rows: ${allRows.length}`)
+  say(`filter over all providers: median ${t[100].toFixed(3)}ms  p95 ${t[190].toFixed(3)}ms  max ${t[199].toFixed(3)}ms`)
+  say(`debounce in the shipped code: 300ms`)
+  say(`=> the debounce buys ${t[100].toFixed(2)}ms of compute for 300ms of added latency`)
+  window.__P__={median:t[100],p95:t[190]}
+})()
+</script></body></html>

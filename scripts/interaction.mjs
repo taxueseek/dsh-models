@@ -79,9 +79,17 @@ globalThis.requestAnimationFrame = (fn) => { globalThis.__raf.calls++; try { fn(
 
 // The two host routes the picker fetches on mount, stubbed to the shapes the
 // host returns (facts ok so the 503-retry path is not exercised here).
-globalThis.fetch = async (url) => {
+// `subagentRoute` is mutable so a test can make the host answer with a route and
+// watch what the picker does with it.
+globalThis.__hostSubagentRoute = null
+globalThis.__subagentPosts = []
+globalThis.fetch = async (url, init) => {
   const u = String(url)
-  if (u.includes('/api/model-picker/subagent')) return { ok: true, status: 200, json: async () => ({ ok: true, route: null }) }
+  if (u.includes('/api/model-picker/subagent')) {
+    if (init?.method === 'POST') { globalThis.__subagentPosts.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ ok: true }) } }
+    if (init?.method === 'DELETE') { globalThis.__subagentPosts.push(null); return { ok: true, status: 200, json: async () => ({ ok: true }) } }
+    return { ok: true, status: 200, json: async () => ({ ok: true, route: globalThis.__hostSubagentRoute }) }
+  }
   return { ok: true, status: 200, json: async () => ({ ok: true, rows: [
     { provider: 'deepseek', id: 'deepseek-chat', contextWindow: 128000, input: ['text'] },
     { provider: 'zhipu', id: 'glm-4.6', contextWindow: 200000, input: ['text'] },
@@ -127,7 +135,12 @@ const slots = {
   register(spec, Component) { captured[spec.name] = { spec, Component }; return () => { delete captured[spec.name] } },
 }
 const sessions = { subagentAddress: () => undefined }
-const modelDirectories = { directoryFor: () => ({ store, load: async () => {}, select: async () => {} }) }
+// Per-session directories: the virtual-list test below mounts a second, large
+// directory under its own session id without disturbing the small one.
+const directories = new Map()
+const modelDirectories = {
+  directoryFor: (sid) => directories.get(sid) ?? { store, load: async () => {}, select: async () => {} },
+}
 const fakeLocale = { getSnapshot: () => ({ active: 'en' }), subscribe: () => () => {} }
 const ctx = {
   inject(names, cb) { const d = cb({ locale: fakeLocale, slots, modelDirectories, sessions, remote: {}, 'remote.session': {} }); return typeof d === 'function' ? d : undefined },
@@ -196,6 +209,260 @@ ok('effort picker renders choices', effortItems >= 2, 'items=' + effortItems)
 const src = readFileSync(join(root, 'lib/client.js'), 'utf8')
 ok('chooseSubagent calls saveSubagentRoute(sessionId, route)', /saveSubagentRoute\(sessionId, route\)/.test(src))
 ok('no shadowed call "void setSubagentRoute(sessionId"', !/void\s+setSubagentRoute\(sessionId/.test(src))
+
+// ── CSS regressions that shipped silently ──
+// The fork lost three things the upstream CSS had. Each is invisible to a
+// behavioural test but plain to the eye, so they are asserted against the
+// stylesheet source.
+ok('group header is sticky again (upstream had position:sticky)', /\.dsh-mp2-groupHeader\{position:sticky/.test(src))
+ok('unselected rows collapse the check column', /\.dsh-mp2-option:not\(\.dsh-mp2-selected\)\s*\.dsh-mp2-check\{flex-basis:0;width:0\}/.test(src))
+ok('dim tag uses the real --dsw- theme token', /\.dsh-mp2-dimtag\{[^}]*color:var\(--dsw-alias-brand-primary\)/.test(src))
+ok('no stray --dsh-alias- token remains', !/--dsh-alias-/.test(src))
+
+// ── the store subscription is not re-created per render ──
+// Inline arrows here made React tear down and re-establish the subscription on
+// every render (measured 56 subscribe / 55 unsubscribe pairs in a browser); the
+// unsub/resub window can also drop a store notification.
+ok('useSyncExternalStore args are memoized', /useSyncExternalStore\(subscribeDirectory, getDirectorySnapshot\)/.test(src))
+ok('directory load runs off a ref, not a closure identity', /const loadRef = useRef\(load\)/.test(src))
+
+// ── subagent route survives a host restart ──
+// The host keeps routes in memory, so after a restart it answers null while
+// localStorage still holds the user's pick. The picker must adopt the local copy
+// and push it back; before this the stored route was written but never read.
+{
+  const sid = 'sess-restore'
+  globalThis.__hostSubagentRoute = null
+  globalThis.__subagentPosts.length = 0
+  dom.window.localStorage.setItem('dsh.modelPicker.subagent.' + sid, JSON.stringify({ provider: 'zhipu', model: 'glm-4.6' }))
+  // Mount into the document: a detached container is outside querySelector's reach.
+  const restoreHost = document.createElement('div')
+  document.body.appendChild(restoreHost)
+  const restoreProps = seat.spec.inject(sid)
+  const restoreRoot = createRoot(restoreHost)
+  await act(async () => { restoreRoot.render(React.createElement(seat.Component, { ...restoreProps, locked: false })) })
+  await flush(80)
+  // The picker adopted the persisted route and pushed it back to the host.
+  ok('restored route activates the subagent trigger', restoreHost.querySelector('.dsh-mp2-triggerSubActive') !== null)
+  ok('restored route is pushed back to the host', globalThis.__subagentPosts.some((p) => p && p.provider === 'zhipu' && p.model === 'glm-4.6'),
+    JSON.stringify(globalThis.__subagentPosts))
+  await act(async () => { restoreRoot.unmount() })
+  restoreHost.remove()
+
+  // A route the host already knows wins, and is not overwritten by storage.
+  globalThis.__hostSubagentRoute = { provider: 'deepseek', model: 'deepseek-chat' }
+  globalThis.__subagentPosts.length = 0
+  const hostHost = document.createElement('div')
+  document.body.appendChild(hostHost)
+  const hostProps = seat.spec.inject(sid)
+  const hostRoot = createRoot(hostHost)
+  await act(async () => { hostRoot.render(React.createElement(seat.Component, { ...hostProps, locked: false })) })
+  await flush(80)
+  ok('a host-known route is not rewritten from storage', globalThis.__subagentPosts.length === 0, JSON.stringify(globalThis.__subagentPosts))
+  await act(async () => { hostRoot.unmount() })
+  hostHost.remove()
+}
+
+// A stored route pointing at a provider/model the catalog no longer serves must
+// NOT be pushed back: the host answers an unknown route with "no adapter
+// registered for provider", so every subagent request would fail. It is dropped
+// from storage instead.
+{
+  const sid = 'sess-dead-route'
+  globalThis.__hostSubagentRoute = null
+  globalThis.__subagentPosts.length = 0
+  dom.window.localStorage.setItem('dsh.modelPicker.subagent.' + sid, JSON.stringify({ provider: 'provider-that-left', model: 'model-that-left' }))
+  const deadHost = document.createElement('div')
+  document.body.appendChild(deadHost)
+  const deadProps = seat.spec.inject(sid)
+  const deadRoot = createRoot(deadHost)
+  await act(async () => { deadRoot.render(React.createElement(seat.Component, { ...deadProps, locked: false })) })
+  await flush(120)
+  ok('dead route is not pushed to the host', globalThis.__subagentPosts.length === 0, JSON.stringify(globalThis.__subagentPosts))
+  eq('dead route is dropped from storage', dom.window.localStorage.getItem('dsh.modelPicker.subagent.' + sid), null)
+  ok('dead route does not light the subagent trigger', deadHost.querySelector('.dsh-mp2-triggerSubActive') === null)
+  await act(async () => { deadRoot.unmount() })
+  deadHost.remove()
+}
+
+// A route the user explicitly cleared must stay cleared across a remount — the
+// restore path must not treat "host says null" as "adopt whatever storage has"
+// without checking that storage actually has something.
+{
+  const sid = 'sess-cleared'
+  globalThis.__hostSubagentRoute = null
+  globalThis.__subagentPosts.length = 0
+  dom.window.localStorage.removeItem('dsh.modelPicker.subagent.' + sid)
+  const clearHost = document.createElement('div')
+  document.body.appendChild(clearHost)
+  const clearProps = seat.spec.inject(sid)
+  const clearRoot = createRoot(clearHost)
+  await act(async () => { clearRoot.render(React.createElement(seat.Component, { ...clearProps, locked: false })) })
+  await flush(120)
+  ok('cleared route is not resurrected on remount', globalThis.__subagentPosts.length === 0, JSON.stringify(globalThis.__subagentPosts))
+  ok('cleared route leaves the trigger inactive', clearHost.querySelector('.dsh-mp2-triggerSubActive') === null)
+  await act(async () => { clearRoot.unmount() })
+  clearHost.remove()
+}
+
+// ── IME composition must not filter mid-word ──
+// Chinese/Japanese/Korean input fires onChange for every keystroke of an
+// in-progress word. Filtering on those renders "no match" for text the user has
+// not finished typing — the list visibly blanks mid-word. The filter has to wait
+// for compositionend, while the input keeps showing what was typed.
+{
+  const imeHost = document.createElement('div')
+  document.body.appendChild(imeHost)
+  const imeRoot = createRoot(imeHost)
+  await act(async () => { imeRoot.render(React.createElement(seat.Component, { ...seat.spec.inject('sess-ime'), locked: false })) })
+  await flush(60)
+  await act(async () => { imeHost.querySelector('.dsh-mp2-triggerLeft').click() })
+  await flush(360)
+  const rowsBefore = imeHost.querySelectorAll('.dsh-mp2-list .dsh-mp2-option').length
+  ok('ime: popup opens with rows', rowsBefore > 0, 'rows=' + rowsBefore)
+
+  const box = imeHost.querySelector('.dsh-mp2-search')
+  const type = (v) => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(box, v)
+    box.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+  }
+  await act(async () => {
+    box.dispatchEvent(new dom.window.CompositionEvent('compositionstart', { bubbles: true }))
+    type('z')
+  })
+  // Let every timer the filter could have queued fire.
+  await flush(400)
+  eq('ime: typing mid-composition does not filter', imeHost.querySelectorAll('.dsh-mp2-list .dsh-mp2-option').length, rowsBefore)
+  eq('ime: the input still shows the in-progress text', box.value, 'z')
+
+  await act(async () => {
+    type('zzz-nonexistent')
+    box.dispatchEvent(new dom.window.CompositionEvent('compositionend', { bubbles: true }))
+  })
+  await flush(120)
+  const rowsAfter = imeHost.querySelectorAll('.dsh-mp2-list .dsh-mp2-option').length
+  ok('ime: filtering resumes once the composition commits', rowsAfter !== rowsBefore, `rows ${rowsBefore} -> ${rowsAfter}`)
+
+  await act(async () => { imeRoot.unmount() })
+  imeHost.remove()
+}
+
+// ── virtualized list: the window must behave like the full list ──
+// jsdom reports clientHeight 0, so the picker mounts everything — correct for
+// the tests above but blind to the windowing path a browser takes. This mounts
+// a large directory, stubs the list's viewport to a real 320px, and drives the
+// paths virtualization changes: window size, spacer math, sticky headers, the
+// scroll spy, cursor-follow and search over the windowed list.
+{
+  const VNAMES = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike', 'november', 'oscar', 'papa', 'quebec', 'romeo', 'sierra', 'tango']
+  const VCOUNTS = [70, 34, 31, 24, 18, 14, 13, 12, 10, 9, 9, 8, 7, 6, 5, 5, 4, 4, 3, 2]
+  const VREASONING = { defaultEffort: 'high', efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] }
+  const VGROUPS = VNAMES.map((id, pi) => ({
+    id, name: 'V' + id,
+    models: Array.from({ length: VCOUNTS[pi] }, (_, mi) => ({
+      id: id + '-' + mi, name: 'V' + id + ' ' + mi,
+      description: mi % 2 === 0 ? 'desc ' + mi : undefined,
+      ...(mi % 3 === 0 ? { reasoning: VREASONING } : {}),
+    })),
+  }))
+  const VTOTAL = VGROUPS.reduce((n, g) => n + g.models.length, 0)
+  ok('virtual fixture is above the virtual threshold', VTOTAL > 200, 'models=' + VTOTAL)
+
+  const vsnapshot = { current: null, routable: null, groups: VGROUPS, failures: [], status: 'ready', error: null }
+  const vlisteners = new Set()
+  const vstore = { subscribe(fn) { vlisteners.add(fn); return () => vlisteners.delete(fn) }, getSnapshot: () => vsnapshot }
+  directories.set('sess-virtual', { store: vstore, load: async () => {}, select: async () => {} })
+
+  const vHost = document.createElement('div')
+  document.body.appendChild(vHost)
+  const vRoot = createRoot(vHost)
+  await act(async () => { vRoot.render(React.createElement(seat.Component, { ...seat.spec.inject('sess-virtual'), locked: false })) })
+  await flush(60)
+  await act(async () => { vHost.querySelector('.dsh-mp2-triggerLeft').click() })
+  await flush(360)
+
+  const vlist = vHost.querySelector('.dsh-mp2-list')
+  ok('virtual: popup opened', vlist !== null)
+  // A real viewport: 320px, well under the CSS clamp's 400px max.
+  Object.defineProperty(vlist, 'clientHeight', { value: 320, configurable: true })
+  // One scroll at the top publishes the measured viewport and settles the window.
+  await act(async () => { vlist.scrollTop = 0; vlist.dispatchEvent(new dom.window.Event('scroll')) })
+  await flush(60)
+
+  const windowRows = () => vHost.querySelectorAll('.dsh-mp2-list .dsh-mp2-option').length
+  const mounted = windowRows()
+  ok('virtual: window mounts a small slice, not the full list', mounted > 0 && mounted < 60, 'mounted=' + mounted + ' of ' + VTOTAL)
+  const spacerOf = (key) => {
+    const el = vHost.querySelector('.dsh-mp2-list > [aria-hidden="true"]' + (key === 'top' ? ':first-child' : ':last-child'))
+    return el === null ? 0 : Number(el.style.height.replace('px', ''))
+  }
+  ok('virtual: at the top the head spacer is empty', spacerOf('top') === 0, 'top=' + spacerOf('top'))
+
+  // Deep in the list: the head spacer must stand in for the scrolled-away rows
+  // (within one overscan + row height), the owning group's sticky header must
+  // be mounted, and the elevator must light that group.
+  await act(async () => { vlist.scrollTop = 3000; vlist.dispatchEvent(new dom.window.Event('scroll')) })
+  await flush(80)
+  const headSpacer = spacerOf('top')
+  ok('virtual: head spacer tracks the scroll offset', headSpacer > 2700 && headSpacer < 2800, 'head=' + headSpacer)
+  const headerNames = [...vHost.querySelectorAll('.dsh-mp2-list .dsh-mp2-groupHeader')].map((el) => el.textContent)
+  ok('virtual: the owning group header is mounted while scrolled', headerNames.length > 0, 'headers=' + JSON.stringify(headerNames))
+  const activeProvider = vHost.querySelector('.dsh-mp2-providerActive .dsh-mp2-providerName')
+  ok('virtual: the elevator lights the group at the top edge',
+    activeProvider !== null && headerNames.includes(activeProvider.textContent),
+    'active=' + (activeProvider?.textContent ?? 'none') + ' headers=' + JSON.stringify(headerNames))
+  ok('virtual: window stays small deep in the list', windowRows() > 0 && windowRows() < 60, 'mounted=' + windowRows())
+
+  // The keyboard cursor drives the window: 30 arrow-downs from row 0 must mount
+  // the row the cursor stands on, in the same commit.
+  const vsearch = vHost.querySelector('.dsh-mp2-search')
+  for (let i = 0; i < 30; i++) {
+    await act(async () => { vsearch.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })) })
+  }
+  await flush(50)
+  const vActiveId = vsearch.getAttribute('aria-activedescendant')
+  ok('virtual: the cursor row is mounted (window followed the arrows)',
+    vActiveId !== null && vHost.querySelector('.dsh-mp2-list [id="' + vActiveId + '"]') !== null, 'activeId=' + vActiveId)
+
+  // End jumps to the last row of the last group and mounts it.
+  await act(async () => { vsearch.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'End', bubbles: true })) })
+  await flush(80)
+  const endActiveId = vsearch.getAttribute('aria-activedescendant')
+  ok('virtual: End mounts the last row',
+    endActiveId !== null && vHost.querySelector('.dsh-mp2-list [id="' + endActiveId + '"]') !== null, 'activeId=' + endActiveId)
+
+  // Search over the windowed list still narrows and re-windows.
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
+    setter.call(vsearch, 'valpha 3')
+    vsearch.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+  })
+  await flush(400)
+  const searched = windowRows()
+  // 'valpha 3' matches Valpha 3 and Valpha 30-39 — a deterministic 11.
+  ok('virtual: search narrows the windowed list', searched === 11, 'rows=' + searched)
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
+    setter.call(vsearch, '')
+    vsearch.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+  })
+  await flush(400)
+
+  // The subagent popup windows the same full catalog.
+  await act(async () => { vHost.querySelector('.dsh-mp2-triggerSub').click() })
+  await flush(200)
+  const subList = vHost.querySelector('.dsh-mp2-subagentList')
+  Object.defineProperty(subList, 'clientHeight', { value: 240, configurable: true })
+  await act(async () => { subList.scrollTop = 0; subList.dispatchEvent(new dom.window.Event('scroll')) })
+  await flush(60)
+  const subRows = subList.querySelectorAll('.dsh-mp2-option').length
+  ok('virtual: subagent popup windows too', subRows > 0 && subRows < 60, 'mounted=' + subRows + ' of ' + VTOTAL)
+  await act(async () => { document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+  await flush(50)
+
+  await act(async () => { vRoot.unmount() })
+  vHost.remove()
+}
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail) { console.log('FAILURES:\n - ' + failures.join('\n - ')); process.exit(1) }

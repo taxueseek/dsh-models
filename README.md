@@ -68,7 +68,7 @@ dsh plugin --profile web add git+https://github.com/taxueseek/dsh-models.git
 
 | dsh-models | Harness | Notes |
 | --- | --- | --- |
-| 0.1.2 | **0.2.1-alpha.3 (current, running)** | Adds the test suites and non-blocking cold start; seat and route surfaces unchanged. |
+| 0.1.4 | **0.2.1-alpha.3 (current, running)** | Virtualized model list + dim refresh throttle; seat and route surfaces unchanged. |
 | 0.1.0 | 0.2.0-rc.2 (measured) | Code-identical to the enhanced build running in production; client resolves against the official 0.2.0 slot roster. |
 
 Requires Node.js ≥ 22.19 (the floor the picker is developed and tested on).
@@ -104,14 +104,23 @@ exactly like upstream — the bridge degrades to directory-only facts.
 - **`npm test`** — two pure-Node suites: `scripts/host-route.mjs` drives the
   real route handlers (facts cache, subagent route, error guards),
   `scripts/interaction.mjs` renders the picker in jsdom and drives
-  open/search/favorite/effort — 44 checks total. They SKIP cleanly when the
-  harness peer deps are absent, so the suite stays green on any machine.
+  open/search/favorite/effort/virtual-window — 92 checks total. They SKIP
+  cleanly when the harness peer deps are absent, so the suite stays green on
+  any machine.
 - **Non-blocking cold start** — a cold `/api/model-picker/models` cache answers
   a fast 503 while the catalog refresh runs in the background (measured: first
   response ~3 ms, warm 200 within ~3 s); the client retries that 503 with
   backoff, so price badges appear as soon as the facts land. Warm caches are
   served stale-while-revalidate.
-- **Render-path pass** — stable callbacks + memoized derived lists: an
-  arrow-key press re-renders 2 rows instead of all ~306; a keystroke-filtered
-  list ~258 instead of ~1124. Full details in the
+- **Virtualized list** — the popup mounts only the rows around the viewport
+  (~13 of 310 live) and pads the remainder with two spacer divs, so total
+  height, the scrollbar and every offset stay exact; the section label of the
+  group the list stands in is pinned by a synthetic twin once its real header
+  leaves the window. Measured live in the running web GUI: **open 58.7 → 23.5
+  ms median, 310 → 13 rows mounted, 5506 → 1170 DOM nodes**; in the real-
+  browser bench, cumulative React render across a full interaction session
+  **243 → 65 ms**. Row heights follow whether a row shows its description line
+  (38/50 px), so the scroll math never re-lays-out. The host's `dim` refresh
+  went 60 s → 10 min — a model catalog that turns over in days no longer costs
+  ~1.5 s of CPU per minute. Full details in the
   [CHANGELOG](CHANGELOG.md).

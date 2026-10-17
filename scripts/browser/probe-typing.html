@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>typing latency</title></head>
+<body><div id="app"></div><pre id="out"></pre>
+<script src="./react.js"></script><script src="./react-dom.js"></script>
+<script>
+// Measures what a user actually feels while typing: simulate an 8-character
+// query at a realistic 90ms inter-key interval, then time from the LAST
+// keystroke to the moment the result list matches the full query. Rendering is
+// the cost the debounce is trying to avoid, so this counts commits too.
+(async () => {
+  const out = []
+  const say = (s) => { out.push(s); document.getElementById('out').textContent = out.join('\n') }
+  const variant = new URLSearchParams(location.search).get('v') || 'd300'
+  localStorage.clear()
+
+  const NAMES = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s']
+  const COUNTS = [70,34,31,24,18,14,13,12,10,9,9,8,6,5,4,3,3,2,1]
+  const GROUPS = NAMES.map((id, pi) => ({ id, name:'P'+id, models: Array.from({length:COUNTS[pi]},(_,mi)=>({id:id+'-'+mi,name:'M '+id+mi,description:'desc '+mi})) }))
+  const factsRows = []
+  const snapshot = { current:{provider:'a',model:'a-3'}, routable:null, groups:GROUPS, failures:[], status:'ready', error:null }
+  let subscribeCalls=0, commits=0, renderMs=0
+  const store = { subscribe(){ subscribeCalls++; return ()=>{} }, getSnapshot:()=>snapshot }
+  const origFetch = window.fetch
+  window.fetch = async (u) => String(u).includes('/subagent')
+    ? new Response(JSON.stringify({ok:true,route:null}),{status:200})
+    : new Response(JSON.stringify({ok:true,rows:factsRows,discovered:[]}),{status:200})
+  const React = window.React, { createRoot } = window.ReactDOM, h = React.createElement
+  let plugin=null
+  window.__ModuleLoader__={ load({factory}){ plugin=factory(n=>{ if(n==='react') return React; throw new Error(n) }) } }
+  const src = await (await origFetch('./client-'+variant+'.js')).text()
+  ;(0,eval)(src)
+  const captured={}
+  const slots={ inject(s,fn){return fn()}, register(spec,Component){ captured[spec.name]={spec,Component}; return ()=>{} } }
+  plugin.apply({ inject(n,cb){ return cb({ locale:{getSnapshot:()=>({active:'zh'}),subscribe:()=>()=>{}}, slots,
+      modelDirectories:{ directoryFor:()=>({store, load:async()=>{}, select:async()=>{}}) },
+      sessions:{subagentAddress:()=>undefined}, remote:{}, 'remote.session':{} }) },
+    slots, effect(fn){ const d=fn(); return typeof d==='function'?d:undefined } })
+  const seat=captured['conversation.input.model'], Comp=seat.Component, props=seat.spec.inject('t')
+  const onRender=(id,phase,actualDuration)=>{ commits++; renderMs+=actualDuration }
+  const root=createRoot(document.getElementById('app'))
+  const wait=ms=>new Promise(r=>setTimeout(r,ms))
+  const setInput=(el,v)=>{ const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set; s.call(el,v); el.dispatchEvent(new Event('input',{bubbles:true})) }
+
+  say('variant: ' + variant + '  query="' + new URLSearchParams(location.search).get('q') + '"')
+  root.render(h(React.Profiler,{id:'p',onRender},h(Comp,{...props,locked:false})))
+  await wait(120)
+  document.querySelector('.dsh-mp2-triggerLeft').click()
+  await wait(120)
+
+  // 8-char query the user types, then read the moment the DOM shows the result
+  const QUERY = new URLSearchParams(location.search).get('q') || 'desc 12'
+  const search = document.querySelector('.dsh-mp2-search')
+  const list = document.querySelector('.dsh-mp2-list')
+  const rowsNow = () => list.querySelectorAll('.dsh-mp2-option').length
+
+  const c0 = commits, r0 = renderMs
+  const typed = performance.now()
+  // The observer must be armed BEFORE the keystrokes: a debounce shorter than
+  // the typing cadence commits inside the inter-key gap, so attaching after
+  // the loop (as this once did) measures nothing — every commit already
+  // happened. `lastKeyAt` is stamped at the keystroke itself, not after the
+  // trailing wait, so "settled" is measured from the key the user pressed.
+  let lastMutationAt = 0
+  const mo = new MutationObserver(() => { lastMutationAt = performance.now() })
+  mo.observe(list, { childList: true, subtree: true, characterData: true, attributes: true })
+  let lastKey = 0
+  for (let i = 1; i <= QUERY.length; i++) {
+    setInput(search, QUERY.slice(0, i))
+    lastKey = performance.now()
+    await wait(90)                 // a realistic typing cadence
+  }
+  await wait(2500)                      // longer than any debounce under test
+  mo.disconnect()
+  const afterLastKey = lastMutationAt === 0 ? null : lastMutationAt - lastKey
+  // Also surface the raw absolute so a "never" reading can be told apart from a
+  // measurement-window artefact.
+  say('  (raw) last mutation at +' + (lastMutationAt === 0 ? 'none' : (lastMutationAt - lastKey).toFixed(1)) + 'ms after last key')
+  const total = performance.now() - typed
+  say('')
+  say(`typed "${QUERY}" in ${QUERY.length} keys @90ms`)
+  say(`  last keystroke → settled result : ${afterLastKey === null ? 'never settled' : afterLastKey.toFixed(1)+'ms'}`)
+  say(`  total wall time for the sequence : ${total.toFixed(1)}ms`)
+  say(`  rows visible at the end          : ${rowsNow()}`)
+  say(`  commits / cumulative render      : ${commits-c0} / ${(renderMs-r0).toFixed(1)}ms`)
+  say(`  store subscriptions              : ${subscribeCalls}`)
+  window.__T__ = { afterLastKey, total, commits: commits-c0, renderMs: renderMs-r0 }
+})().catch(e => { document.getElementById('out').textContent = 'ERROR: ' + (e && e.stack || e) })
+</script></body></html>

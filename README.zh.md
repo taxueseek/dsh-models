@@ -10,6 +10,12 @@
   <img src="intro.png" alt="dsh-models 总览：三分区触发——推理层级、子代理路由、主模型选择" width="720" />
 </div>
 
+## 实际效果 / Actual UI
+
+<div align="center">
+  <img src="screenshot.png" alt="dsh-models 实际界面：模型选择器，含搜索、供应商列、价格徽章" width="720" />
+</div>
+
 ## 一句话
 
 dsh 网页端的模型菜单——模型、思考强度、子代理用什么模型，都在输入框的模型座上点一下搞定。

@@ -10,6 +10,12 @@
   <img src="intro.png" alt="dsh-models overview: three-zone trigger — reasoning effort, subagent routing, main model picker" width="720" />
 </div>
 
+## 实际效果 / Actual UI
+
+<div align="center">
+  <img src="screenshot.png" alt="dsh-models actual UI: model picker with search, provider column, price badges" width="720" />
+</div>
+
 ## In one line
 
 The model menu for the dsh web GUI — pick the model, its effort, and your
